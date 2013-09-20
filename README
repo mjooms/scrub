@@ -1,5 +1,0 @@
-Scrub - It feels soapy - Erlang SOAP 1.2 client
-
-This is a transformation of Yaws' yaws_soap12_lib into a separate Erlang module. 
-
-Similar to detergent, but for SOAP 1.2. See https://github.com/devinus/detergent
