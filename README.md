@@ -1,6 +1,6 @@
-Scrub - Erlang SOAP 1.2 client
+Scrub - It works best with SOAP
 ==============================
-It feels.... SOAPY!!
+An Erlang SOAP 1.2 client
 
 ### Description
 This is a transformation of Yaws' yaws_soap12_lib into a separate Erlang module. See http://hyber.org/
