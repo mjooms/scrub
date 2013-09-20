@@ -1,0 +1,10 @@
+%% -*- mode: erlang; fill-column: 78; -*-
+
+{application, scrub,
+ [{description, "Scrub - Soap Client"},
+  {vsn, "1"},
+  {registered, []},
+  {applications, [kernel,
+                  stdlib]},
+  {mod, {scrub_app, []}},
+  {env, []}]}.
