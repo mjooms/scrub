@@ -12,7 +12,7 @@
 
 -module(scrub).
 
--export([initModel/1, initModel/2,
+-export([initModel/1, initModel/4, initModel/3, initModel/2,
 	 initModelFile/1,
 	 config_file_xsd/0,
 	 call/3, call/4, call/5, call/6, call/8,
@@ -319,12 +319,21 @@ mk_envelope(Messages, Headers) when is_list(Messages),is_list(Headers) ->
 %%% Parse a WSDL file and return a 'Model'
 %%% --------------------------------------------------------------------
 initModel(WsdlFile) ->
-    initModel(WsdlFile, ?DefaultPrefix).
+  initModel(WsdlFile, ?DefaultPrefix, [], [], false).
+
+initModel(WsdlFile, Prefix) ->
+  initModel(WsdlFile, Prefix, [], [], false).
+
+initModel(WsdlFile, Username, Password) ->
+    initModel(WsdlFile, ?DefaultPrefix, Username, Password, false).
+
+initModel(WsdlFile, Username, Password, VerifySSL) ->
+    initModel(WsdlFile, ?DefaultPrefix, Username, Password, VerifySSL).
 
 %% PrefixOrOptions can be a property list that contains the options
 %% for Erlsom, or a String. If it is a string, this is used as the
 %% Erlsom 'prefix' option (and the other options are left unspecified).
-initModel(WsdlFile, PrefixOrOptions) ->
+initModel(WsdlFile, PrefixOrOptions, Username, Password, VerifySSL) ->
     Options = case is_string(PrefixOrOptions) of
         no ->
           %% It is an option list
@@ -336,7 +345,7 @@ initModel(WsdlFile, PrefixOrOptions) ->
           [{prefix, PrefixOrOptions}]
     end,
     PrivDir = priv_dir(),
-    initModel2(WsdlFile, Options, PrivDir, undefined, undefined).
+    initModel2(WsdlFile, Options, PrivDir, undefined, undefined, Username, Password, VerifySSL).
 
 initModelFile(ConfigFile) ->
     {ok, ConfigSchema} = erlsom:compile_xsd(config_file_xsd()),
@@ -346,12 +355,12 @@ initModelFile(ConfigFile) ->
 		      wsdl_file = Wsdl,
 		      add_files = AddFiles} = Config,
     #xsd_file{name = WsdlFile, prefix = Prefix, import_specs = Import} = Wsdl,
-    initModel2(WsdlFile, [{prefix, Prefix}], XsdPath, Import, AddFiles).
+    initModel2(WsdlFile, [{prefix, Prefix}], XsdPath, Import, AddFiles, [], [], false).
 
 priv_dir() ->
     code:priv_dir(scrub).
 
-initModel2(WsdlFile, ErlsomOptions, Path, Import, AddFiles) ->
+initModel2(WsdlFile, ErlsomOptions, Path, Import, AddFiles, Username, Password, VerifySSL) ->
     WsdlName = filename:join([Path, "wsdl.xsd"]),
     IncludeWsdl = {"http://schemas.xmlsoap.org/wsdl/", "wsdl", WsdlName},
     {ok, WsdlModel} = erlsom:compile_xsd_file(
@@ -365,7 +374,7 @@ initModel2(WsdlFile, ErlsomOptions, Path, Import, AddFiles) ->
     Options = ErlsomOptions ++ makeOptions(Import),
     %% parse Wsdl
     {Model, Operations} = parseWsdls([WsdlFile], WsdlModel2,
-                                     Options, {undefined, []}),
+                                     Options, {undefined, []}, Username, Password, VerifySSL),
     %% TODO: add files as required
     %% now compile envelope.xsd, and add Model
     {ok, EnvelopeModel} = erlsom:compile_xsd_file(
@@ -383,14 +392,14 @@ initModel2(WsdlFile, ErlsomOptions, Path, Import, AddFiles) ->
 %%% Parse a list of WSDLs and import (recursively)
 %%% Returns {Model, Operations}
 %%% --------------------------------------------------------------------
-parseWsdls(WsdlFiles, WsdlModel, Options, Acc) ->
-    parseWsdls(WsdlFiles, WsdlModel, Options, Acc, #namespace_registry{}).
+parseWsdls(WsdlFiles, WsdlModel, Options, Acc, Username, Password, VerifySSL) ->
+    parseWsdls(WsdlFiles, WsdlModel, Options, Acc, #namespace_registry{}, Username, Password, VerifySSL).
 
-parseWsdls([], _WsdlModel, _Options, Acc, _NSRegistry) ->
+parseWsdls([], _WsdlModel, _Options, Acc, _NSRegistry, _, _, _) ->
     Acc;
-parseWsdls([WsdlFile | Tail], WsdlModel, Options, {AccModel, AccOperations}, NSRegistry) ->
+parseWsdls([WsdlFile | Tail], WsdlModel, Options, {AccModel, AccOperations}, NSRegistry, Username, Password, VerifySSL) ->
     WsdlFileNoSpaces = rmsp(WsdlFile),
-    {ok, WsdlFileContent} = get_url_file(WsdlFileNoSpaces),
+    {ok, WsdlFileContent} = get_url_file(WsdlFileNoSpaces, Username, Password, VerifySSL),
     {ok, ParsedWsdl, _} = erlsom:scan(WsdlFileContent, WsdlModel),
     WsdlTargetNameSpace = getTargetNamespaceFromWsdl(ParsedWsdl),
     {Prefix, PrefixlessOptions} = remove_prefix_option(Options),
@@ -415,7 +424,7 @@ parseWsdls([WsdlFile | Tail], WsdlModel, Options, {AccModel, AccOperations}, NSR
     %% this makes it a bit easier to deal with imported wsdl's.
     %% TODO uncomment if imports can be WSDL
     %%Acc3 = parseWsdls(Imports, WsdlModel, Options, Acc2, ImportsEnrichedNSRegistry),
-    parseWsdls(Tail, WsdlModel, PrefixlessOptions, Acc2, ImportsEnrichedNSRegistry).
+    parseWsdls(Tail, WsdlModel, PrefixlessOptions, Acc2, ImportsEnrichedNSRegistry, [], [], false).
 
 remove_prefix_option(Options) ->
     case lists:keytake(prefix, 1, Options) of
@@ -509,26 +518,64 @@ addSchemaFiles([Xsd| Tail], AccModel, Options, ImportList) ->
     addSchemaFiles(Tail, Model2, Options, ImportList).
 
 %%% --------------------------------------------------------------------
+%%% Make a list of headers from username/password
+%%% --------------------------------------------------------------------
+make_headers(Username, Password) ->
+  case {Username, Password} of
+    {Username, []} ->
+      %%% Invalid condition
+      [];
+    {[], Password} ->
+      %%% Invalid condition
+      [];
+    {Username, Password} ->
+      Encoded = base64:encode_to_string(Username++":"++Password),
+      [{"Authorization", "Basic " ++ Encoded}]
+  end.
+
+%%% --------------------------------------------------------------------
 %%% Get a file from an URL spec.
 %%% --------------------------------------------------------------------
-get_url_file("http://"++_ = URL) ->
-    case httpc:request(URL) of
-	{ok,{{_HTTP,200,_OK}, _Headers, Body}} ->
-	    {ok, Body};
-	{ok,{{_HTTP,RC,Emsg}, _Headers, _Body}} ->
-	    error_logger:error_msg("~p: http-request got: ~p~n",
-                                   [?MODULE, {RC, Emsg}]),
-	    {error, "failed to retrieve: "++URL};
-	{error, Reason} ->
-	    error_logger:error_msg("~p: http-request failed: ~p~n",
-                                   [?MODULE, Reason]),
-	    {error, "failed to retrieve: "++URL}
-    end;
-get_url_file("file://"++Fname) ->
+get_url_file("http://"++_ = URL, Username, Password, _) ->
+  case httpc:request(get, {URL, make_headers(Username, Password)}, [{timeout, 5000}], []) of
+    {ok,{{_HTTP,200,_OK}, _Headers, Body}} ->
+      {ok, Body};
+    {ok,{{_HTTP,RC,Emsg}, _Headers, _Body}} ->
+      error_logger:error_msg("~p: http-request got: ~p~n",
+        [?MODULE, {RC, Emsg}]),
+      {error, "failed to retrieve: "++URL};
+    {error, Reason} ->
+      error_logger:error_msg("~p: http-request failed: ~p~n",
+        [?MODULE, Reason]),
+      {error, "failed to retrieve: "++URL}
+  end;
+get_url_file("https://"++_ = URL, Username, Password, VerifySSL=false) ->
+  HTTPOptions = case VerifySSL of
+                  false ->
+                    [{ssl, [{verify, 0}]}, {timeout, 5000}];
+                  _ ->
+                    [{timeout, 5000}]
+                end,
+  RetVal = case httpc:request(get, {URL, make_headers(Username, Password)}, HTTPOptions, []) of
+    {ok,{{_HTTP,200,_OK}, _Headers, Body}} ->
+      {ok, Body};
+    {ok,{{_HTTP,RC,Emsg}, _Headers, _Body}} ->
+      error_logger:error_msg("~p: http-request got: ~p~n",
+        [?MODULE, {RC, Emsg}]),
+      {error, "failed to retrieve: "++URL};
+    {error, Reason} ->
+      error_logger:error_msg("~p: http-request failed: ~p~n",
+        [?MODULE, Reason]),
+      {error, "failed to retrieve: "++URL};
+    Anything ->
+      error_logger:error_msg("~p: Unknown error: ~p~n", [?MODULE, Anything])
+  end,
+  RetVal;
+get_url_file("file://"++Fname, _, _, _) ->
     {ok, Bin} = file:read_file(Fname),
     {ok, binary_to_list(Bin)};
 %% added this, since this is what is used in many WSDLs (i.e.: just a filename).
-get_url_file(Fname) ->
+get_url_file(Fname, _, _, _) ->
     {ok, Bin} = file:read_file(Fname),
     {ok, binary_to_list(Bin)}.
 
@@ -549,11 +596,11 @@ http_request(URL, Action, Request, Options, Headers, ContentType) ->
     end.
 
 inets_request(URL, Action, Request, Options, Headers, ContentType) ->
-    case Action of
+    NHeaders = case Action of
       undefined ->
-	NHeaders = Headers;
+	      Headers;
       _ ->
-	NHeaders = [{"SOAPAction", Action} | Headers]
+	      [{"SOAPAction", Action} | Headers]
     end,
     NewHeaders = case proplists:get_value("Host", NHeaders) of
                      undefined ->
