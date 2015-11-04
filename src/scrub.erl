@@ -393,14 +393,11 @@ initModel2(WsdlFile, ErlsomOptions, Path, Import, AddFiles, Username, Password, 
 %%% Returns {Model, Operations}
 %%% --------------------------------------------------------------------
 parseWsdls(WsdlFiles, WsdlModel, Options, Acc, Username, Password, VerifySSL) ->
-    io:format("parseWsdls/7~n"),
     parseWsdls(WsdlFiles, WsdlModel, Options, Acc, #namespace_registry{}, Username, Password, VerifySSL).
 
 parseWsdls([], _WsdlModel, _Options, Acc, _NSRegistry, _, _, _) ->
-    io:format("parseWsdls/8~n"),
     Acc;
 parseWsdls([WsdlFile | Tail], WsdlModel, Options, {AccModel, AccOperations}, NSRegistry, Username, Password, VerifySSL) ->
-    io:format("parseWsdls/8-2~n"),
     WsdlFileNoSpaces = rmsp(WsdlFile),
     {ok, WsdlFileContent} = get_url_file(WsdlFileNoSpaces, Username, Password, VerifySSL),
     {ok, ParsedWsdl, _} = erlsom:scan(WsdlFileContent, WsdlModel),
@@ -540,7 +537,6 @@ make_headers(Username, Password) ->
 %%% Get a file from an URL spec.
 %%% --------------------------------------------------------------------
 get_url_file("http://"++_ = URL, Username, Password, _) ->
-  io:format("get_url_file/4-http~n"),
   case httpc:request(get, {URL, make_headers(Username, Password)}, [{timeout, 5000}], []) of
     {ok,{{_HTTP,200,_OK}, _Headers, Body}} ->
       {ok, Body};
@@ -554,17 +550,14 @@ get_url_file("http://"++_ = URL, Username, Password, _) ->
       {error, "failed to retrieve: "++URL}
   end;
 get_url_file("https://"++_ = URL, Username, Password, VerifySSL=false) ->
-  io:format("get_url_file/4-https~n"),
   HTTPOptions = case VerifySSL of
                   false ->
                     [{ssl, [{verify, 0}]}, {timeout, 5000}];
                   _ ->
                     [{timeout, 5000}]
                 end,
-  io:format("HTTPS Options"),
   RetVal = case httpc:request(get, {URL, make_headers(Username, Password)}, HTTPOptions, []) of
     {ok,{{_HTTP,200,_OK}, _Headers, Body}} ->
-      io:format("Got 200 OK~n"),
       {ok, Body};
     {ok,{{_HTTP,RC,Emsg}, _Headers, _Body}} ->
       error_logger:error_msg("~p: http-request got: ~p~n",
@@ -577,7 +570,6 @@ get_url_file("https://"++_ = URL, Username, Password, VerifySSL=false) ->
     Anything ->
       error_logger:error_msg("~p: Unknown error: ~p~n", [?MODULE, Anything])
   end,
-  io:format("Completed HTTP(S) request~n"),
   RetVal;
 get_url_file("file://"++Fname, _, _, _) ->
     {ok, Bin} = file:read_file(Fname),
